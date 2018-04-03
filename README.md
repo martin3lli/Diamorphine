@@ -45,7 +45,7 @@ uname -r
 
 Clone the repository
 ```
-git clone https://github.com/m0nad/Diamorphine
+git clone https://github.com/alex91ar/Diamorphine
 ```
 
 Enter the folder
